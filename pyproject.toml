@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kamiru"
+version = "1.0.0"
+description = "Recorte de fondos por lotes con IA (RMBG-2.0) — app local para Kamila y Sebastian"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Non-commercial (see README: RMBG-2.0 license)" }
+dependencies = [
+    "numpy>=1.26",
+    "pillow>=10.0",
+    "pillow-heif>=0.16",
+    "opencv-python>=4.9",
+    "tifffile>=2024.1.30",
+    "transformers>=4.45,<5",
+    "timm>=0.9",
+    "einops>=0.7",
+    "kornia>=0.7",
+    "scipy>=1.11",
+    "huggingface_hub>=0.23",
+    "tkinterdnd2>=0.4",
+]
+
+[project.scripts]
+kamiru = "kamiru.cli:main"
+
+[project.gui-scripts]
+kamiru-gui = "kamiru.gui.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

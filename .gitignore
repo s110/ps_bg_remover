@@ -1,0 +1,18 @@
+# Entorno y cache
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Modelos descargados (se cachean localmente, no van al repo)
+models/
+
+# Logs y salidas de corridas
+logs/
+samples/output/
+
+# SO
+.DS_Store
+Thumbs.db
