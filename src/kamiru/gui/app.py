@@ -76,9 +76,13 @@ class KamiruApp:
         self._cancel = threading.Event()
         self._matter = None
         self._matter_key: tuple | None = None
+        # generación de trabajo: Cancelar la incrementa y el trabajo viejo
+        # queda "huérfano" — la UI se libera al instante sin esperar al hilo
+        self._job_gen = 0
+        self._busy_since: float | None = None
 
         self._build_ui()
-        setup_batch_logging(logs_dir())
+        self._logfile = setup_batch_logging(logs_dir())
         self._show_device_status()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_queue)
@@ -181,6 +185,8 @@ class KamiruApp:
         self.open_out_btn.pack(side="left", padx=(8, 0))
         self.device_lbl = ttk.Label(actions, text="", foreground="#666")
         self.device_lbl.pack(side="right")
+        self.elapsed_lbl = ttk.Label(actions, text="", foreground="#666")
+        self.elapsed_lbl.pack(side="right", padx=(0, 10))
 
         self.progress = ttk.Progressbar(main, mode="determinate")
         self.progress.pack(fill="x", **pad)
@@ -300,22 +306,35 @@ class KamiruApp:
             return None
         return p
 
-    def _build_matter(self):
-        choice = self.model.get()
+    def _matter_spec(self) -> dict:
+        """Lee la config del motor EN EL HILO PRINCIPAL (Tk no es thread-safe:
+        leer variables Tk desde el worker se cuelga o muere en silencio)."""
+        return {
+            "choice": self.model.get(),
+            "resolution": int(self.resolution.get()),
+            "chroma_auto": self.chroma_auto.get(),
+            "chroma_color": self.chroma_color,
+        }
+
+    def _build_matter(self, spec: dict, gen: int):
+        """Corre en el worker: usa solo valores planos, nada de widgets Tk."""
+        choice = spec["choice"]
         if choice.startswith("croma"):
             from ..core.chroma import ChromaMatter
 
-            key = None if self.chroma_auto.get() else self.chroma_color
+            key = None if spec["chroma_auto"] else spec["chroma_color"]
             return ChromaMatter(key_color=key)
-        key = (choice, int(self.resolution.get()))
+        key = (choice, spec["resolution"])
         if self._matter is not None and self._matter_key == key:
             return self._matter  # ya cargado, no re-descargar ni re-cargar
         from ..core.matting import load_matter
 
         matter = load_matter(
-            choice, process_resolution=int(self.resolution.get()),
-            progress=lambda msg: self._queue.put(("status", msg)),
+            choice, process_resolution=spec["resolution"],
+            progress=lambda msg: self._queue.put(("status", gen, msg)),
         )
+        # aunque este trabajo haya sido cancelado, el modelo queda cacheado
+        # para el próximo Procesar (la carga no se repite)
         self._matter, self._matter_key = matter, key
         return matter
 
@@ -333,6 +352,29 @@ class KamiruApp:
             suffix=self.suffix.get(),
         )
 
+    def _begin_job(self) -> int:
+        """Marca la UI como ocupada y devuelve la generación de este trabajo."""
+        import time
+
+        self._job_gen += 1
+        gen = self._job_gen
+        self._cancel.clear()
+        self._busy_since = time.monotonic()
+        self.run_btn.configure(state="disabled")
+        self.preview_btn.configure(state="disabled")
+        self.cancel_btn.configure(state="normal")
+        return gen
+
+    def _end_job(self) -> None:
+        self._busy_since = None
+        self.elapsed_lbl.configure(text="")
+        self.run_btn.configure(state="normal")
+        self.preview_btn.configure(state="normal")
+        self.cancel_btn.configure(state="disabled")
+
+    def _is_stale(self, gen: int) -> bool:
+        return gen != self._job_gen or self._cancel.is_set()
+
     def _start(self) -> None:
         inputs = self._collect_inputs()
         if inputs is None:
@@ -346,26 +388,26 @@ class KamiruApp:
         if opts is None:
             return
         self._save_settings()
-        self._cancel.clear()
-        self.run_btn.configure(state="disabled")
-        self.preview_btn.configure(state="disabled")
-        self.cancel_btn.configure(state="normal")
+        spec = self._matter_spec()
+        gen = self._begin_job()
         self.progress.configure(value=0)
         self._set_summary("")
 
         def work():
             try:
-                matter = self._build_matter()
+                matter = self._build_matter(spec, gen)
+                if self._is_stale(gen):
+                    return  # cancelado durante la carga: el modelo queda cacheado
                 summary = run_batch(
                     inputs, Path(out), matter, opts,
                     progress=lambda done, total, name: self._queue.put(
-                        ("progress", done, total, name)),
-                    cancel=self._cancel.is_set,
+                        ("progress", gen, done, total, name)),
+                    cancel=lambda: self._is_stale(gen),
                 )
-                self._queue.put(("done", summary))
+                self._queue.put(("done", gen, summary))
             except Exception as exc:
                 log.exception("Fallo del lote")
-                self._queue.put(("fatal", str(exc)))
+                self._queue.put(("fatal", gen, str(exc)))
 
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
@@ -381,21 +423,23 @@ class KamiruApp:
             messagebox.showwarning(APP_NAME, "No hay fotos soportadas en la selección.")
             return
         first = files[0]
-        self.run_btn.configure(state="disabled")
-        self.preview_btn.configure(state="disabled")
+        spec = self._matter_spec()
+        gen = self._begin_job()
         self._set_status(f"Vista previa de {first.name}…")
 
         def work():
             try:
                 from ..core.imageio import load_image
 
-                matter = self._build_matter()
+                matter = self._build_matter(spec, gen)
+                if self._is_stale(gen):
+                    return
                 loaded = load_image(first)
                 result = matter.cutout(loaded.rgb)
-                self._queue.put(("preview", first.name, result.rgba))
+                self._queue.put(("preview", gen, first.name, result.rgba))
             except Exception as exc:
                 log.exception("Fallo de la vista previa")
-                self._queue.put(("fatal", str(exc)))
+                self._queue.put(("fatal", gen, str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -426,8 +470,14 @@ class KamiruApp:
                             "aprieta Procesar si se ve bien.").pack(pady=6)
 
     def _cancel_run(self) -> None:
+        # liberar la UI al instante; el hilo viejo queda huérfano y termina
+        # solo (si estaba cargando el modelo, la carga se aprovecha después)
         self._cancel.set()
-        self._set_status("Cancelando al terminar la foto actual…")
+        self._job_gen += 1
+        self._end_job()
+        self.progress.configure(value=0)
+        self._set_status("Cancelado. (Si el modelo estaba cargándose, la carga "
+                         "sigue de fondo y se aprovecha en el próximo Procesar.)")
 
     # ------------------------------------------------------------- cola UI
     def _poll_queue(self) -> None:
@@ -435,30 +485,36 @@ class KamiruApp:
             while True:
                 msg = self._queue.get_nowait()
                 kind = msg[0]
-                if kind == "progress":
-                    _, done, total, name = msg
-                    self.progress.configure(maximum=max(total, 1), value=done)
-                    if name:
-                        self._set_status(f"Procesando {done + 1} de {total}: {name}")
-                elif kind == "status":
-                    self._set_status(msg[1])
-                elif kind == "device":
+                if kind == "device":
                     info = msg[1]
                     self.device_lbl.configure(text=info.name)
                     if info.warning:
                         self._set_status(f"⚠ {info.warning}")
-                elif kind == "device_error":
+                        self._set_summary(f"⚠ {info.warning}")
+                    continue
+                if kind == "device_error":
                     self.device_lbl.configure(text="PyTorch no disponible")
+                    continue
+
+                # el resto de los mensajes vienen etiquetados con la
+                # generación; los de un trabajo cancelado se descartan
+                gen = msg[1]
+                if gen != self._job_gen:
+                    continue
+                if kind == "progress":
+                    _, _, done, total, name = msg
+                    self.progress.configure(maximum=max(total, 1), value=done)
+                    if name:
+                        self._set_status(f"Procesando {done + 1} de {total}: {name}")
+                elif kind == "status":
+                    self._set_status(msg[2])
                 elif kind == "preview":
-                    self.run_btn.configure(state="normal")
-                    self.preview_btn.configure(state="normal")
+                    self._end_job()
                     self._set_status("Vista previa lista.")
-                    self._show_preview(msg[1], msg[2])
+                    self._show_preview(msg[2], msg[3])
                 elif kind == "done":
-                    summary = msg[1]
-                    self.run_btn.configure(state="normal")
-                    self.preview_btn.configure(state="normal")
-                    self.cancel_btn.configure(state="disabled")
+                    summary = msg[2]
+                    self._end_job()
                     self.open_out_btn.configure(state="normal")
                     self.progress.configure(value=self.progress["maximum"])
                     self._set_status("Terminado.")
@@ -468,14 +524,26 @@ class KamiruApp:
                         summary.text() or "No había imágenes para procesar.",
                     )
                 elif kind == "fatal":
-                    self.run_btn.configure(state="normal")
-                    self.preview_btn.configure(state="normal")
-                    self.cancel_btn.configure(state="disabled")
+                    self._end_job()
                     self._set_status("Error.")
-                    messagebox.showerror(APP_NAME, f"No se pudo procesar:\n{msg[1]}")
+                    self._set_summary(f"Error: {msg[2]}\n\nDetalles: {self._logfile}")
+                    messagebox.showerror(
+                        APP_NAME,
+                        f"No se pudo procesar:\n{msg[2]}\n\n"
+                        f"Detalles técnicos en:\n{self._logfile}",
+                    )
         except queue.Empty:
             pass
+        self._tick_elapsed()
         self.root.after(100, self._poll_queue)
+
+    def _tick_elapsed(self) -> None:
+        if self._busy_since is None:
+            return
+        import time
+
+        secs = int(time.monotonic() - self._busy_since)
+        self.elapsed_lbl.configure(text=f"⏱ {secs // 60}:{secs % 60:02d}")
 
     def _set_status(self, text: str) -> None:
         self.status.configure(text=text)
@@ -491,6 +559,10 @@ class KamiruApp:
 
 
 def main() -> None:
+    from ..runtime import ensure_std_streams, quiet_library_progress
+
+    ensure_std_streams()      # pythonw / exe sin consola: streams seguros
+    quiet_library_progress()  # sin barras tqdm de librerías en la GUI
     logging.basicConfig(level=logging.INFO)
     KamiruApp().run()
 
