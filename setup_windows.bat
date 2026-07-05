@@ -2,8 +2,8 @@
 setlocal enabledelayedexpansion
 REM ============================================================
 REM  Kamiru - instalacion en Windows (correr UNA vez, Sebastian)
-REM  Crea el venv, instala PyTorch CUDA para la RTX 5070 Ti,
-REM  instala la app y descarga el modelo RMBG-2.0.
+REM  Usa uv (instalador rapido). Crea el venv, instala PyTorch
+REM  CUDA para la RTX 5070 Ti, la app y descarga el modelo.
 REM ============================================================
 cd /d "%~dp0"
 
@@ -30,32 +30,41 @@ if not defined PYCMD (
 )
 echo Usando: %PYCMD%
 
-REM --- 2. Crear el entorno virtual
-if not exist venv (
-    %PYCMD% -m venv venv || (echo ERROR creando venv & pause & exit /b 1)
+REM --- 2. uv: instalador rapido de paquetes (se bootstrapea con pip)
+where uv >nul 2>&1
+if %errorlevel%==0 (
+    set "UV=uv"
+) else (
+    echo Instalando uv...
+    %PYCMD% -m pip install -q uv || (echo ERROR instalando uv & pause & exit /b 1)
+    set "UV=%PYCMD% -m uv"
 )
-set "PIP=venv\Scripts\python.exe -m pip"
-%PIP% install --upgrade pip
 
-REM --- 3. PyTorch: CUDA 12.8 si hay GPU NVIDIA (5070 Ti = Blackwell), CPU si no
+REM --- 3. Crear el entorno virtual con uv
+if not exist venv (
+    %UV% venv venv || (echo ERROR creando venv & pause & exit /b 1)
+)
+set "VPY=venv\Scripts\python.exe"
+
+REM --- 4. PyTorch: CUDA 12.8 si hay GPU NVIDIA (5070 Ti = Blackwell), CPU si no
 where nvidia-smi >nul 2>&1
 if %errorlevel%==0 (
     echo Instalando PyTorch con CUDA 12.8 ^(GPU NVIDIA detectada^)...
-    %PIP% install torch torchvision --index-url https://download.pytorch.org/whl/cu128 || (
+    %UV% pip install --python %VPY% torch torchvision --index-url https://download.pytorch.org/whl/cu128 || (
         echo ERROR instalando PyTorch CUDA & pause & exit /b 1
     )
 ) else (
     echo AVISO: no se detecto GPU NVIDIA. Instalando PyTorch para CPU ^(mas lento^).
-    %PIP% install torch torchvision
+    %UV% pip install --python %VPY% torch torchvision
 )
 
-REM --- 4. Instalar la app y sus dependencias
-%PIP% install -e . || (echo ERROR instalando dependencias & pause & exit /b 1)
+REM --- 5. Instalar la app y sus dependencias
+%UV% pip install --python %VPY% -e . || (echo ERROR instalando dependencias & pause & exit /b 1)
 
-REM --- 5. Verificar GPU
-venv\Scripts\python.exe -c "import torch; ok=torch.cuda.is_available(); print('CUDA disponible:', ok); print('GPU:', torch.cuda.get_device_name(0) if ok else 'ninguna (se usara CPU, mas lento)')"
+REM --- 6. Verificar GPU
+%VPY% -c "import torch; ok=torch.cuda.is_available(); print('CUDA disponible:', ok); print('GPU:', torch.cuda.get_device_name(0) if ok else 'ninguna (se usara CPU, mas lento)')"
 
-REM --- 6. Token de HuggingFace (RMBG-2.0 es un repo con registro)
+REM --- 7. Token de HuggingFace (RMBG-2.0 es un repo con registro)
 if not exist models mkdir models
 if not exist models\hf_token.txt (
     echo.
@@ -68,10 +77,10 @@ if not exist models\hf_token.txt (
     if defined HFTOK (echo !HFTOK!)> models\hf_token.txt
 )
 
-REM --- 7. Descargar y cachear el modelo (una sola vez)
+REM --- 8. Descargar y cachear el modelo (una sola vez)
 echo.
 echo Descargando el modelo (~1 GB, solo esta vez)...
-venv\Scripts\python.exe scripts\download_model.py rmbg-2.0 || (
+%VPY% scripts\download_model.py rmbg-2.0 || (
     echo ERROR descargando el modelo. Revisa la conexion y reintenta.
     pause
     exit /b 1

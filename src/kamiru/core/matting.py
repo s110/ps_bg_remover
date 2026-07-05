@@ -91,6 +91,7 @@ class NeuralMatter(BaseMatter):
         model_key: str = DEFAULT_MODEL,
         process_resolution: int = 1024,
         device: DeviceInfo | None = None,
+        progress=None,
     ) -> None:
         if model_key not in MODEL_REPOS:
             raise ValueError(f"Modelo desconocido: {model_key!r}. Opciones: {list(MODEL_REPOS)}")
@@ -107,11 +108,18 @@ class NeuralMatter(BaseMatter):
 
         log.info("Cargando modelo %s (%s) en %s...", model_key, self.repo, self.device_info.kind)
         try:
+            # descarga con progreso detallado (o valida el cache local)
+            from .model_fetch import ensure_model
+
+            ensure_model(self.repo, progress)
+            if progress:
+                progress(f"Cargando {model_key} en {self.device_info.kind}...")
             self.model = AutoModelForImageSegmentation.from_pretrained(
                 self.repo, trust_remote_code=True, token=hf_token()
             )
-        except OSError as exc:
-            if "gated" in str(exc).lower() or "401" in str(exc):
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "gated" in msg or "401" in msg:
                 raise RuntimeError(
                     f"No hay acceso al modelo {self.repo} (repo gated).\n\n{GATED_HELP}"
                 ) from exc
@@ -180,5 +188,6 @@ def load_matter(
     model_key: str = DEFAULT_MODEL,
     process_resolution: int = 1024,
     device: DeviceInfo | None = None,
+    progress=None,
 ) -> NeuralMatter:
-    return NeuralMatter(model_key, process_resolution, device)
+    return NeuralMatter(model_key, process_resolution, device, progress=progress)

@@ -33,6 +33,17 @@ class BatchOptions:
     margin: int = 2                   # margen extra del recorte, px
     split_touching: bool = False      # watershed para piezas que se tocan
     psd_layered: bool = True          # en individual+PSD: 1 PSD con capas por foto
+    suffix: str = ""                  # sufijo opcional: foto_recorte.png, foto_recorte_01.png
+
+    def normalized_suffix(self) -> str:
+        s = self.suffix.strip()
+        if not s:
+            return ""
+        # limpiar caracteres no aptos para nombre de archivo
+        s = "".join(c for c in s if c not in '\\/:*?"<>|').strip()
+        if s and not s.startswith(("_", "-", ".")):
+            s = "_" + s
+        return s
 
     def validate(self) -> None:
         if self.mode not in ("conjunto", "individual"):
@@ -119,7 +130,7 @@ def process_image(
     result = matter.cutout(loaded.rgb)
     alpha = result.alpha
     rgba = np.asarray(result.rgba, dtype=np.uint8)
-    stem = path.stem
+    stem = path.stem + opts.normalized_suffix()
 
     if opts.mode == "conjunto":
         bbox = content_bbox(alpha, opts.alpha_threshold)

@@ -11,16 +11,43 @@ sin terminal** para el uso diario.
 
 ---
 
-## Instalación (una sola vez — guía para Sebastian)
+## Dos formas de instalar
 
-### Windows (PC con RTX 5070 Ti)
+### A. Ejecutable autocontenido (release)
+
+La carpeta `dist/Kamiru` que produce el build contiene **`Kamiru.exe`**
+(Windows) o **`Kamiru`** (macOS) con Python, PyTorch y todas las
+dependencias adentro: se copia a cualquier máquina del mismo sistema
+operativo y se abre con doble clic, sin instalar nada. Al primer uso la app
+descarga el modelo a `models/` junto al ejecutable (con progreso detallado
+en la barra de estado) y no vuelve a bajarlo.
+
+- **Para generarlo:** `packaging/build_release.bat` (Windows — detecta la
+  GPU y empaqueta PyTorch CUDA 12.8) o `packaging/build_release.command`
+  (macOS — PyTorch con MPS). Produce `dist/Kamiru` y el zip
+  `Kamiru-win64.zip` / `Kamiru-macos.zip`. Usa **uv**, así que el build
+  tarda pocos minutos.
+- **Releases automáticos:** al pushear un tag `v*`, GitHub Actions
+  (`.github/workflows/release.yml`) construye y publica
+  `Kamiru-win64-cpu.zip` y `Kamiru-macos.zip` en la página de Releases.
+  *Nota honesta:* esos assets usan PyTorch CPU/MPS porque el build con CUDA
+  pesa varios GB y excede el límite de 2 GB por archivo de GitHub Releases —
+  el build GPU para la 5070 Ti se genera local con `build_release.bat` y se
+  pasa por USB o red local.
+
+### B. Instalación con scripts (desarrollo o PC propia)
+
+Ambos scripts usan **uv** (se auto-instala si falta), así que la instalación
+completa tarda una fracción de lo que tardaría pip.
+
+**Windows (PC con RTX 5070 Ti):**
 
 1. Instala **Python 3.12** desde <https://www.python.org/downloads/>
    marcando **"Add Python to PATH"**. (RMBG-2.0 no soporta 3.13; sirve
    3.10–3.12.)
 2. Descarga o clona este repositorio donde quieras que viva la app.
 3. Doble clic en **`setup_windows.bat`**. El script:
-   - crea el entorno virtual (`venv/`),
+   - crea el entorno virtual (`venv/`) con uv,
    - instala PyTorch con **CUDA 12.8** (la 5070 Ti es Blackwell; wheels
      `cu128`) o CPU si no hay GPU,
    - instala la app y sus dependencias,
@@ -29,7 +56,7 @@ sin terminal** para el uso diario.
      (~1 GB) a `models/` — **una sola vez**.
 4. Crea un acceso directo de **`Kamiru.bat`** en el escritorio de Kamila.
 
-### macOS
+**macOS:**
 
 1. Ten Python 3.10–3.12 (`brew install python@3.12` o python.org).
 2. Doble clic en **`setup_macos.command`** (si Gatekeeper se queja:
@@ -99,7 +126,12 @@ Por cada imagen de la carpeta (JPG, PNG, TIFF, HEIC, WebP, BMP):
      Compatible con Photoshop, Affinity, Krita y GIMP.
 
 Nomenclatura: conjunto → `nombre_origen.ext`; individual →
-`nombre_origen_01.ext`, `_02`, ... con relleno de ceros.
+`nombre_origen_01.ext`, `_02`, ... con relleno de ceros. Con **sufijo**
+(campo de la GUI o `--sufijo`): `nombre_origen_recorte.ext` /
+`nombre_origen_recorte_01.ext`.
+
+La entrada puede ser una **carpeta o fotos sueltas** (arrastradas o elegidas
+con el botón *Fotos…*).
 
 Una imagen que falla **se registra y se salta** sin abortar el lote; al final
 hay resumen de exportados y errores, y queda log por corrida en `logs/`.
@@ -114,11 +146,24 @@ hay resumen de exportados y errores, y queda log por corrida en `logs/`.
 | Separar piezas que se tocan | watershed sobre la transformada de distancia (experimental) |
 | Croma | color de fondo automático (muestreo de esquinas) o elegido a mano — útil como camino alterno en green screen / cartulina |
 
+Además la GUI trae:
+
+- **Vista previa**: recorta solo la primera foto y la muestra sobre tablero
+  de ajedrez antes de lanzar el lote completo.
+- **Memoria de configuración**: carpetas, modo, formato, sufijo y opciones
+  avanzadas se recuerdan entre sesiones (`settings.json`).
+- **Abrir salida**: abre la carpeta de resultados en el explorador al
+  terminar.
+- **Progreso de descarga del modelo** en la barra de estado: archivos,
+  tamaños, porcentaje y qué ya estaba en cache.
+
 ### CLI (mismo core que la GUI)
 
 ```bash
 kamiru fotos/ salida/ --modo individual --formato png --area-minima 400
 kamiru fotos/ salida/ --modo individual --formato psd          # PSD por capas
+kamiru fotos/ salida/ --sufijo recorte                         # foto_recorte.png
+kamiru foto.jpg salida/                                        # una foto suelta
 kamiru fotos/ salida/ --modelo birefnet-hr --resolucion 2048   # A/B de borde
 kamiru fotos/ salida/ --motor croma --chroma-color 00ff00      # green screen
 kamiru fotos/ salida/ --separar-tocandose                      # watershed
@@ -137,6 +182,8 @@ src/kamiru/            paquete (core reutilizable + GUI + CLI)
   gui/app.py             ventana de arrastrar y soltar
   cli.py                 línea de comandos
 scripts/               download_model.py, make_samples.py, sample_run.py
+packaging/             spec de PyInstaller + build scripts del ejecutable
+.github/workflows/     release automático (Windows/macOS) al taggear v*
 tests/                 tests sin GPU: separación, export, PSD, pipeline
 models/                cache local del modelo (no se re-descarga)
 logs/                  un log por corrida

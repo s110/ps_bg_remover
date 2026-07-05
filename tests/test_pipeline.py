@@ -130,6 +130,40 @@ def test_cancel_stops_early(folder, tmp_path):
     assert s.total < 3
 
 
+def test_suffix_conjunto_and_individual(folder, tmp_path):
+    out = tmp_path / "out"
+    run_batch(folder, out, FakeMatter(),
+              BatchOptions(mode="conjunto", fmt="png", suffix="recorte"))
+    assert (out / "una_pieza_recorte.png").exists()
+    out2 = tmp_path / "out2"
+    run_batch(folder, out2, FakeMatter(),
+              BatchOptions(mode="individual", fmt="png", min_area=100, suffix="_rec"))
+    names = sorted(p.name for p in out2.iterdir())
+    assert names == ["dos_piezas_rec_01.png", "dos_piezas_rec_02.png",
+                     "una_pieza_rec_01.png"]
+
+
+def test_suffix_sanitized():
+    opts = BatchOptions(suffix='ma/lo:*?"')
+    assert opts.normalized_suffix() == "_malo"
+    assert BatchOptions(suffix="  ").normalized_suffix() == ""
+    assert BatchOptions(suffix="-v2").normalized_suffix() == "-v2"
+
+
+def test_settings_roundtrip(tmp_path, monkeypatch):
+    monkeypatch.setenv("KAMIRU_HOME", str(tmp_path))
+    from kamiru.settings import Settings, load_settings, save_settings
+
+    s = Settings(input_dir="/fotos", mode="individual", suffix="rec",
+                 min_area="250", split_touching=True)
+    save_settings(s)
+    back = load_settings()
+    assert back == s
+    # archivo corrupto → defaults sin explotar
+    (tmp_path / "settings.json").write_text("{rotisimo", encoding="utf-8")
+    assert load_settings() == Settings()
+
+
 def test_exif_orientation(tmp_path):
     """Una imagen con EXIF Orientation=6 debe rotarse antes de procesar."""
     from PIL import Image as PILImage

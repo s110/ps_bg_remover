@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Área mínima en px² para exportar un objeto (filtra motas)")
     p.add_argument("--umbral", type=float, default=0.5, help="Umbral de binarizado del alfa")
     p.add_argument("--margen", type=int, default=2, help="Margen del recorte en px")
+    p.add_argument("--sufijo", default="",
+                   help="Sufijo para los nombres: foto_SUFIJO.png / foto_SUFIJO_01.png")
     p.add_argument("--separar-tocandose", action="store_true",
                    help="Watershed para dividir piezas que se tocan")
     p.add_argument("--motor", choices=["ia", "croma"], default="ia",
@@ -74,7 +76,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Dispositivo: {device.name}")
         if device.warning:
             print(f"AVISO: {device.warning}")
-        matter = load_matter(args.modelo, process_resolution=args.resolucion, device=device)
+        matter = load_matter(args.modelo, process_resolution=args.resolucion,
+                             device=device, progress=print)
 
     opts = BatchOptions(
         mode=args.modo,
@@ -84,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         margin=args.margen,
         split_touching=args.separar_tocandose,
         psd_layered=not args.psd_archivos_sueltos,
+        suffix=args.sufijo,
     )
 
     entrada = args.entrada
