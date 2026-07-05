@@ -18,15 +18,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from kamiru.core.matting import DEFAULT_MODEL, GATED_HELP, MODEL_REPOS  # noqa: E402
-from kamiru.paths import configure_hf_cache, default_model_file, hf_token  # noqa: E402
+from kamiru.paths import configure_hf_cache, default_model_file  # noqa: E402
 
 
 def download(key: str) -> str:
-    from huggingface_hub import snapshot_download
+    from kamiru.core.model_fetch import ensure_model
 
     repo = MODEL_REPOS[key]
-    print(f"Descargando {key} ({repo}) ...")
-    path = snapshot_download(repo, token=hf_token())
+    path = ensure_model(repo, progress=print)
     print(f"Listo. Modelo cacheado en: {path}")
     return path
 

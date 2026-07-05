@@ -1,10 +1,12 @@
 """GUI de Kamiru: ventana simple de arrastrar y soltar.
 
-Controles principales (los que ve Kamila): carpeta de entrada, carpeta de
-salida, modo (Conjunto/Individual), formato (PNG/TIFF/TIFF 16-bit/PSD),
-botón Procesar, barra de progreso y resumen. Un panel «Avanzado» plegado
-esconde el resto (motor, resolución, área mínima, separación de piezas que
-se tocan, croma).
+Controles principales (los que ve Kamila): entrada (carpeta o fotos sueltas),
+carpeta de salida, modo (Conjunto/Individual), formato, sufijo opcional,
+Vista previa, Procesar, barra de progreso y resumen. Un desplegable
+«▸ Opciones avanzadas» esconde el resto (motor, resolución, área mínima,
+separación de piezas que se tocan, croma).
+
+La configuración se recuerda entre sesiones (settings.json junto a la app).
 """
 
 from __future__ import annotations
@@ -17,9 +19,10 @@ from pathlib import Path
 from tkinter import colorchooser, filedialog, messagebox, ttk
 
 from .. import APP_NAME, __version__
-from ..core.imageio import is_supported, list_images
+from ..core.imageio import SUPPORTED_EXTENSIONS, is_supported, list_images
 from ..core.pipeline import BatchOptions, run_batch, setup_batch_logging
 from ..paths import logs_dir
+from ..settings import Settings, load_settings, save_settings
 
 log = logging.getLogger("kamiru.gui")
 
@@ -45,20 +48,25 @@ def _try_dnd_root():
 
 class KamiruApp:
     def __init__(self) -> None:
-        self.root, self.has_dnd = _try_dnd_root()
-        self.root.title(f"{APP_NAME} — recorte de fondos {__version__}")
-        self.root.minsize(560, 460)
-
-        self.input_dir = tk.StringVar()
-        self.output_dir = tk.StringVar()
         from ..core.matting import resolve_default_model
 
-        self.mode = tk.StringVar(value="conjunto")
-        self.format_label = tk.StringVar(value="PNG (transparente)")
-        self.model = tk.StringVar(value=resolve_default_model())
-        self.resolution = tk.StringVar(value="1024")
-        self.min_area = tk.StringVar(value="400")
-        self.split_touching = tk.BooleanVar(value=False)
+        self.root, self.has_dnd = _try_dnd_root()
+        self.root.title(f"{APP_NAME} — recorte de fondos {__version__}")
+        self.root.minsize(600, 500)
+
+        saved = load_settings()
+        self.input_dir = tk.StringVar(value=saved.input_dir)
+        self.output_dir = tk.StringVar(value=saved.output_dir)
+        self.mode = tk.StringVar(value=saved.mode)
+        self.format_label = tk.StringVar(
+            value=saved.format_label if saved.format_label in FORMAT_LABELS
+            else "PNG (transparente)")
+        self.suffix = tk.StringVar(value=saved.suffix)
+        self.model = tk.StringVar(value=saved.model or resolve_default_model())
+        self.resolution = tk.StringVar(
+            value=saved.resolution if saved.resolution in RESOLUTIONS else "1024")
+        self.min_area = tk.StringVar(value=saved.min_area)
+        self.split_touching = tk.BooleanVar(value=saved.split_touching)
         self.chroma_auto = tk.BooleanVar(value=True)
         self.chroma_color: tuple[int, int, int] | None = None
         self.dropped_files: list[Path] = []
@@ -72,6 +80,7 @@ class KamiruApp:
         self._build_ui()
         setup_batch_logging(logs_dir())
         self._show_device_status()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_queue)
 
     # ------------------------------------------------------------- UI
@@ -82,8 +91,8 @@ class KamiruApp:
 
         drop = tk.Label(
             main,
-            text=("Arrastra aquí una carpeta o fotos\n(o usa los botones de abajo)"
-                  if self.has_dnd else "Elige las carpetas con los botones"),
+            text=("Arrastra aquí una carpeta o fotos sueltas\n(o usa los botones de abajo)"
+                  if self.has_dnd else "Elige la carpeta o las fotos con los botones"),
             relief="groove", height=4, bg="#f2f0ec", fg="#555",
         )
         drop.pack(fill="x", **pad)
@@ -94,36 +103,48 @@ class KamiruApp:
             drop.dnd_bind("<<Drop>>", self._on_drop)
 
         row1 = ttk.Frame(main); row1.pack(fill="x", **pad)
-        ttk.Label(row1, text="Fotos (entrada):", width=16).pack(side="left")
+        ttk.Label(row1, text="Fotos (entrada):", width=15).pack(side="left")
         ttk.Entry(row1, textvariable=self.input_dir).pack(side="left", fill="x", expand=True)
-        ttk.Button(row1, text="Elegir…", command=self._pick_input).pack(side="left", padx=(6, 0))
+        ttk.Button(row1, text="Carpeta…", command=self._pick_input, width=9).pack(
+            side="left", padx=(6, 0))
+        ttk.Button(row1, text="Fotos…", command=self._pick_files, width=8).pack(
+            side="left", padx=(4, 0))
 
         row2 = ttk.Frame(main); row2.pack(fill="x", **pad)
-        ttk.Label(row2, text="Guardar en:", width=16).pack(side="left")
+        ttk.Label(row2, text="Guardar en:", width=15).pack(side="left")
         ttk.Entry(row2, textvariable=self.output_dir).pack(side="left", fill="x", expand=True)
-        ttk.Button(row2, text="Elegir…", command=self._pick_output).pack(side="left", padx=(6, 0))
+        ttk.Button(row2, text="Elegir…", command=self._pick_output, width=9).pack(
+            side="left", padx=(6, 0))
 
         row3 = ttk.Frame(main); row3.pack(fill="x", **pad)
-        ttk.Label(row3, text="Modo:", width=16).pack(side="left")
+        ttk.Label(row3, text="Modo:", width=15).pack(side="left")
         ttk.Radiobutton(row3, text="Conjunto (todo en un archivo)",
                         variable=self.mode, value="conjunto").pack(side="left")
         ttk.Radiobutton(row3, text="Individual (un archivo por pieza)",
                         variable=self.mode, value="individual").pack(side="left", padx=(10, 0))
 
         row4 = ttk.Frame(main); row4.pack(fill="x", **pad)
-        ttk.Label(row4, text="Formato:", width=16).pack(side="left")
-        ttk.Combobox(row4, textvariable=self.format_label, state="readonly",
-                     values=list(FORMAT_LABELS)).pack(side="left", fill="x", expand=True)
+        ttk.Label(row4, text="Formato:", width=15).pack(side="left")
+        ttk.Combobox(row4, textvariable=self.format_label, state="readonly", width=22,
+                     values=list(FORMAT_LABELS)).pack(side="left")
+        ttk.Label(row4, text="  Sufijo:").pack(side="left")
+        suffix_entry = ttk.Entry(row4, textvariable=self.suffix, width=12)
+        suffix_entry.pack(side="left")
+        ttk.Label(row4, text=" ej: «recorte» → foto_recorte.png",
+                  foreground="#888").pack(side="left")
 
-        # ------- panel avanzado plegable
-        self._adv_visible = tk.BooleanVar(value=False)
-        toggle = ttk.Checkbutton(main, text="Avanzado", style="Toolbutton",
-                                 variable=self._adv_visible, command=self._toggle_advanced)
-        toggle.pack(anchor="w", padx=10)
+        # ------- desplegable de opciones avanzadas
+        self._adv_visible = False
+        self._adv_toggle = tk.Label(
+            main, text="▸ Opciones avanzadas", fg="#2a5db0", cursor="hand2",
+            font=("TkDefaultFont", 9, "underline"),
+        )
+        self._adv_toggle.pack(anchor="w", padx=12, pady=(2, 0))
+        self._adv_toggle.bind("<Button-1>", lambda _e: self._toggle_advanced())
         self.adv = ttk.LabelFrame(main, text="Opciones avanzadas")
 
         a1 = ttk.Frame(self.adv); a1.pack(fill="x", **pad)
-        ttk.Label(a1, text="Motor:", width=16).pack(side="left")
+        ttk.Label(a1, text="Motor:", width=15).pack(side="left")
         ttk.Combobox(a1, textvariable=self.model, state="readonly",
                      values=MODEL_CHOICES, width=18).pack(side="left")
         ttk.Label(a1, text="  Resolución:").pack(side="left")
@@ -131,13 +152,13 @@ class KamiruApp:
                      values=RESOLUTIONS, width=6).pack(side="left")
 
         a2 = ttk.Frame(self.adv); a2.pack(fill="x", **pad)
-        ttk.Label(a2, text="Área mínima (px):", width=16).pack(side="left")
+        ttk.Label(a2, text="Área mínima (px):", width=15).pack(side="left")
         ttk.Entry(a2, textvariable=self.min_area, width=8).pack(side="left")
         ttk.Checkbutton(a2, text="Separar piezas que se tocan (experimental)",
                         variable=self.split_touching).pack(side="left", padx=(14, 0))
 
         a3 = ttk.Frame(self.adv); a3.pack(fill="x", **pad)
-        ttk.Label(a3, text="Croma:", width=16).pack(side="left")
+        ttk.Label(a3, text="Croma:", width=15).pack(side="left")
         ttk.Checkbutton(a3, text="Color de fondo automático (esquinas)",
                         variable=self.chroma_auto).pack(side="left")
         ttk.Button(a3, text="Elegir color…", command=self._pick_chroma_color).pack(
@@ -145,14 +166,19 @@ class KamiruApp:
         self._chroma_swatch = tk.Label(a3, text="  auto  ", relief="sunken")
         self._chroma_swatch.pack(side="left", padx=(8, 0))
 
-        # ------- acción, progreso, resumen
+        # ------- acciones, progreso, resumen
         actions = ttk.Frame(main); actions.pack(fill="x", **pad)
         self._actions_frame = actions
         self.run_btn = ttk.Button(actions, text="Procesar", command=self._start)
         self.run_btn.pack(side="left")
+        self.preview_btn = ttk.Button(actions, text="Vista previa", command=self._preview)
+        self.preview_btn.pack(side="left", padx=(8, 0))
         self.cancel_btn = ttk.Button(actions, text="Cancelar", command=self._cancel_run,
                                      state="disabled")
         self.cancel_btn.pack(side="left", padx=(8, 0))
+        self.open_out_btn = ttk.Button(actions, text="Abrir salida",
+                                       command=self._open_output, state="disabled")
+        self.open_out_btn.pack(side="left", padx=(8, 0))
         self.device_lbl = ttk.Label(actions, text="", foreground="#666")
         self.device_lbl.pack(side="right")
 
@@ -166,9 +192,12 @@ class KamiruApp:
         self.summary_box.pack(fill="both", expand=True, padx=10, pady=(4, 10))
 
     def _toggle_advanced(self) -> None:
-        if self._adv_visible.get():
+        self._adv_visible = not self._adv_visible
+        if self._adv_visible:
+            self._adv_toggle.configure(text="▾ Opciones avanzadas")
             self.adv.pack(fill="x", padx=10, pady=4, before=self._actions_frame)
         else:
+            self._adv_toggle.configure(text="▸ Opciones avanzadas")
             self.adv.pack_forget()
 
     def _show_device_status(self) -> None:
@@ -192,15 +221,28 @@ class KamiruApp:
             self.dropped_files = []
             self._set_status(f"Carpeta: {dirs[0].name} ({len(list_images(dirs[0]))} fotos)")
         elif files:
-            self.dropped_files = files
-            self.input_dir.set(f"{len(files)} foto(s) sueltas")
-            self._set_status(f"{len(files)} foto(s) para procesar")
+            self._set_files(files)
+
+    def _set_files(self, files: list[Path]) -> None:
+        self.dropped_files = files
+        self.input_dir.set(f"{len(files)} foto(s) elegidas")
+        self._set_status("Fotos elegidas: " + ", ".join(f.name for f in files[:6])
+                         + ("…" if len(files) > 6 else ""))
 
     def _pick_input(self) -> None:
         d = filedialog.askdirectory(title="Carpeta con las fotos")
         if d:
             self.input_dir.set(d)
             self.dropped_files = []
+
+    def _pick_files(self) -> None:
+        exts = " ".join(f"*{e}" for e in sorted(SUPPORTED_EXTENSIONS))
+        files = filedialog.askopenfilenames(
+            title="Elegir fotos sueltas",
+            filetypes=[("Imágenes", exts), ("Todos los archivos", "*.*")],
+        )
+        if files:
+            self._set_files([Path(f) for f in files])
 
     def _pick_output(self) -> None:
         d = filedialog.askdirectory(title="Carpeta donde guardar los recortes")
@@ -214,6 +256,37 @@ class KamiruApp:
             self.chroma_auto.set(False)
             hexcol = "#%02x%02x%02x" % self.chroma_color
             self._chroma_swatch.configure(text="        ", bg=hexcol)
+
+    def _open_output(self) -> None:
+        out = self.output_dir.get().strip()
+        if not out or not Path(out).is_dir():
+            return
+        import subprocess
+        import sys
+
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", out])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", out])
+        else:
+            subprocess.Popen(["xdg-open", out])
+
+    def _on_close(self) -> None:
+        self._save_settings()
+        self.root.destroy()
+
+    def _save_settings(self) -> None:
+        save_settings(Settings(
+            input_dir="" if self.dropped_files else self.input_dir.get(),
+            output_dir=self.output_dir.get(),
+            mode=self.mode.get(),
+            format_label=self.format_label.get(),
+            suffix=self.suffix.get(),
+            model=self.model.get(),
+            resolution=self.resolution.get(),
+            min_area=self.min_area.get(),
+            split_touching=self.split_touching.get(),
+        ))
 
     # ------------------------------------------------------------- proceso
     def _collect_inputs(self):
@@ -239,34 +312,43 @@ class KamiruApp:
             return self._matter  # ya cargado, no re-descargar ni re-cargar
         from ..core.matting import load_matter
 
-        self._queue.put(("status", f"Cargando modelo {choice}… (la primera vez descarga ~1 GB)"))
-        matter = load_matter(choice, process_resolution=int(self.resolution.get()))
+        matter = load_matter(
+            choice, process_resolution=int(self.resolution.get()),
+            progress=lambda msg: self._queue.put(("status", msg)),
+        )
         self._matter, self._matter_key = matter, key
         return matter
+
+    def _validated_options(self) -> BatchOptions | None:
+        try:
+            min_area = int(self.min_area.get())
+        except ValueError:
+            messagebox.showwarning(APP_NAME, "El área mínima debe ser un número entero de píxeles.")
+            return None
+        return BatchOptions(
+            mode=self.mode.get(),
+            fmt=FORMAT_LABELS[self.format_label.get()],
+            min_area=min_area,
+            split_touching=self.split_touching.get(),
+            suffix=self.suffix.get(),
+        )
 
     def _start(self) -> None:
         inputs = self._collect_inputs()
         if inputs is None:
-            messagebox.showwarning(APP_NAME, "Elige una carpeta de fotos válida (o arrastra fotos).")
+            messagebox.showwarning(APP_NAME, "Elige una carpeta o fotos sueltas para procesar.")
             return
         out = self.output_dir.get().strip()
         if not out:
             messagebox.showwarning(APP_NAME, "Elige la carpeta donde guardar los recortes.")
             return
-        try:
-            min_area = int(self.min_area.get())
-        except ValueError:
-            messagebox.showwarning(APP_NAME, "El área mínima debe ser un número entero de píxeles.")
+        opts = self._validated_options()
+        if opts is None:
             return
-
-        opts = BatchOptions(
-            mode=self.mode.get(),
-            fmt=FORMAT_LABELS[self.format_label.get()],
-            min_area=min_area,
-            split_touching=self.split_touching.get(),
-        )
+        self._save_settings()
         self._cancel.clear()
         self.run_btn.configure(state="disabled")
+        self.preview_btn.configure(state="disabled")
         self.cancel_btn.configure(state="normal")
         self.progress.configure(value=0)
         self._set_summary("")
@@ -287,6 +369,61 @@ class KamiruApp:
 
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
+
+    def _preview(self) -> None:
+        """Recorta solo la primera foto y la muestra sobre tablero de ajedrez."""
+        inputs = self._collect_inputs()
+        if inputs is None:
+            messagebox.showwarning(APP_NAME, "Elige una carpeta o fotos sueltas primero.")
+            return
+        files = self.dropped_files or list_images(inputs)
+        if not files:
+            messagebox.showwarning(APP_NAME, "No hay fotos soportadas en la selección.")
+            return
+        first = files[0]
+        self.run_btn.configure(state="disabled")
+        self.preview_btn.configure(state="disabled")
+        self._set_status(f"Vista previa de {first.name}…")
+
+        def work():
+            try:
+                from ..core.imageio import load_image
+
+                matter = self._build_matter()
+                loaded = load_image(first)
+                result = matter.cutout(loaded.rgb)
+                self._queue.put(("preview", first.name, result.rgba))
+            except Exception as exc:
+                log.exception("Fallo de la vista previa")
+                self._queue.put(("fatal", str(exc)))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_preview(self, name: str, rgba) -> None:
+        from PIL import Image, ImageTk
+
+        max_side = 680
+        scale = min(max_side / rgba.width, max_side / rgba.height, 1.0)
+        im = rgba.resize((int(rgba.width * scale), int(rgba.height * scale)),
+                         Image.BILINEAR)
+        # tablero de ajedrez de fondo para ver la transparencia
+        board = Image.new("RGB", im.size, "white")
+        t = 12
+        for y in range(0, im.height, t):
+            for x in range(0, im.width, t):
+                if (x // t + y // t) % 2:
+                    board.paste((205, 205, 205), (x, y, min(x + t, im.width),
+                                                  min(y + t, im.height)))
+        board.paste(im, (0, 0), im)
+
+        win = tk.Toplevel(self.root)
+        win.title(f"Vista previa — {name}")
+        photo = ImageTk.PhotoImage(board)
+        lbl = tk.Label(win, image=photo)
+        lbl.image = photo  # evitar que el GC borre la imagen
+        lbl.pack()
+        ttk.Label(win, text="Así saldrá el recorte. Cierra esta ventana y "
+                            "aprieta Procesar si se ve bien.").pack(pady=6)
 
     def _cancel_run(self) -> None:
         self._cancel.set()
@@ -312,10 +449,17 @@ class KamiruApp:
                         self._set_status(f"⚠ {info.warning}")
                 elif kind == "device_error":
                     self.device_lbl.configure(text="PyTorch no disponible")
+                elif kind == "preview":
+                    self.run_btn.configure(state="normal")
+                    self.preview_btn.configure(state="normal")
+                    self._set_status("Vista previa lista.")
+                    self._show_preview(msg[1], msg[2])
                 elif kind == "done":
                     summary = msg[1]
                     self.run_btn.configure(state="normal")
+                    self.preview_btn.configure(state="normal")
                     self.cancel_btn.configure(state="disabled")
+                    self.open_out_btn.configure(state="normal")
                     self.progress.configure(value=self.progress["maximum"])
                     self._set_status("Terminado.")
                     self._set_summary(summary.text())
@@ -325,9 +469,10 @@ class KamiruApp:
                     )
                 elif kind == "fatal":
                     self.run_btn.configure(state="normal")
+                    self.preview_btn.configure(state="normal")
                     self.cancel_btn.configure(state="disabled")
                     self._set_status("Error.")
-                    messagebox.showerror(APP_NAME, f"El lote no pudo iniciarse:\n{msg[1]}")
+                    messagebox.showerror(APP_NAME, f"No se pudo procesar:\n{msg[1]}")
         except queue.Empty:
             pass
         self.root.after(100, self._poll_queue)

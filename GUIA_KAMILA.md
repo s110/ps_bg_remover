@@ -7,8 +7,8 @@
 
 ## Recortar una tanda de fotos (4 pasos)
 
-1. **Arrastra la carpeta** con tus fotos a la ventana
-   (o botón *Elegir…* junto a "Fotos (entrada)").
+1. **Arrastra la carpeta** con tus fotos a la ventana — o fotos sueltas, o
+   usa los botones *Carpeta…* / *Fotos…*.
 2. En **"Guardar en"** elige la carpeta donde quieres los recortes.
 3. Elige el **Modo**:
    - **Conjunto** → todo lo que hay en la foto queda junto en un solo
@@ -20,9 +20,19 @@
    - **TIFF** → para imprenta.
    - **PSD por capas** → para Photoshop: cada pieza en su capa.
 
-Aprieta **Procesar** y espera la barra. Al final sale un **resumen**: cuántos
-archivos se exportaron y si alguna foto dio error (esa se salta sola, el
-resto sigue).
+¿Quieres que los archivos lleven una palabra tuya? Escríbela en **Sufijo**:
+con `recorte` los archivos salen como `foto_recorte.png`.
+
+**Tip:** aprieta **Vista previa** primero — recorta solo la primera foto y
+te la muestra sobre cuadritos para que veas cómo va a quedar antes de
+procesar todo.
+
+Aprieta **Procesar** y espera la barra. Al final sale un **resumen** (cuántos
+archivos se exportaron; si una foto da error se salta sola y el resto sigue)
+y el botón **Abrir salida** te lleva directo a tus recortes.
+
+La app **recuerda tu configuración**: mañana se abre con las mismas carpetas
+y opciones de hoy.
 
 ## Tips
 

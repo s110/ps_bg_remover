@@ -8,6 +8,7 @@ cache global de HuggingFace del usuario.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 
@@ -16,6 +17,9 @@ def app_root() -> Path:
     override = os.environ.get("KAMIRU_HOME")
     if override:
         return Path(override)
+    if getattr(sys, "frozen", False):
+        # Ejecutable PyInstaller: models/ y logs/ viven junto al .exe
+        return Path(sys.executable).resolve().parent
     # src/kamiru/paths.py -> src/kamiru -> src -> raíz
     return Path(__file__).resolve().parent.parent.parent
 

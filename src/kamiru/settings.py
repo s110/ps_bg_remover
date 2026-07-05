@@ -1,0 +1,54 @@
+"""Memoria de configuración entre sesiones (settings.json junto a la app).
+
+Guarda lo último usado en la GUI (carpetas, modo, formato, sufijo, opciones
+avanzadas) para que Kamila no tenga que reconfigurar nada cada día.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import asdict, dataclass, fields
+
+from .paths import app_root
+
+log = logging.getLogger("kamiru.settings")
+
+
+@dataclass
+class Settings:
+    input_dir: str = ""
+    output_dir: str = ""
+    mode: str = "conjunto"
+    format_label: str = "PNG (transparente)"
+    suffix: str = ""
+    model: str = ""
+    resolution: str = "1024"
+    min_area: str = "400"
+    split_touching: bool = False
+
+
+def settings_path():
+    return app_root() / "settings.json"
+
+
+def load_settings() -> Settings:
+    path = settings_path()
+    if not path.exists():
+        return Settings()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        valid = {f.name for f in fields(Settings)}
+        return Settings(**{k: v for k, v in data.items() if k in valid})
+    except Exception:  # archivo corrupto → defaults, sin romper la app
+        log.warning("settings.json ilegible, usando valores por defecto")
+        return Settings()
+
+
+def save_settings(s: Settings) -> None:
+    try:
+        settings_path().write_text(
+            json.dumps(asdict(s), indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError:
+        log.warning("No se pudo guardar settings.json")

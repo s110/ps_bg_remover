@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
 #  Kamiru - instalación en macOS (correr UNA vez)
-#  Crea el venv, instala PyTorch (GPU Apple vía MPS), la app
-#  y descarga el modelo RMBG-2.0.
+#  Usa uv (instalador rápido). Crea el venv, instala PyTorch
+#  (GPU Apple vía MPS), la app y descarga el modelo.
 # ============================================================
 set -e
 cd "$(dirname "$0")"
@@ -28,20 +28,29 @@ if [ -z "$PYCMD" ]; then
 fi
 echo "Usando: $PYCMD ($($PYCMD --version))"
 
-# --- 2. Entorno virtual
-[ -d venv ] || "$PYCMD" -m venv venv
-./venv/bin/pip install --upgrade pip
+# --- 2. uv: instalador rápido (bootstrap con pip si falta)
+if command -v uv >/dev/null 2>&1; then
+    UV=uv
+else
+    echo "Instalando uv..."
+    "$PYCMD" -m pip install -q uv
+    UV="$PYCMD -m uv"
+fi
 
-# --- 3. PyTorch (los wheels de macOS traen soporte MPS para GPU Apple)
-./venv/bin/pip install torch torchvision
+# --- 3. Entorno virtual
+[ -d venv ] || $UV venv venv
+VPY=venv/bin/python
 
-# --- 4. La app y sus dependencias
-./venv/bin/pip install -e .
+# --- 4. PyTorch (los wheels de macOS traen soporte MPS para GPU Apple)
+$UV pip install --python "$VPY" torch torchvision
 
-# --- 5. Verificar GPU Apple
-./venv/bin/python -c "import torch; ok=torch.backends.mps.is_available(); print('GPU Apple (MPS):', 'disponible' if ok else 'no disponible (se usará CPU, más lento)')"
+# --- 5. La app y sus dependencias
+$UV pip install --python "$VPY" -e .
 
-# --- 6. Token de HuggingFace (RMBG-2.0 es un repo con registro)
+# --- 6. Verificar GPU Apple
+"$VPY" -c "import torch; ok=torch.backends.mps.is_available(); print('GPU Apple (MPS):', 'disponible' if ok else 'no disponible (se usará CPU, más lento)')"
+
+# --- 7. Token de HuggingFace (RMBG-2.0 es un repo con registro)
 mkdir -p models
 if [ ! -f models/hf_token.txt ]; then
     echo
@@ -54,10 +63,10 @@ if [ ! -f models/hf_token.txt ]; then
     [ -n "$HFTOK" ] && printf '%s\n' "$HFTOK" > models/hf_token.txt
 fi
 
-# --- 7. Descargar y cachear el modelo (una sola vez)
+# --- 8. Descargar y cachear el modelo (una sola vez)
 echo
 echo "Descargando el modelo (~1 GB, solo esta vez)..."
-./venv/bin/python scripts/download_model.py rmbg-2.0
+"$VPY" scripts/download_model.py rmbg-2.0
 
 echo
 echo "=== Listo. Para usar la app: doble clic en Kamiru.command ==="
