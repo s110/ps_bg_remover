@@ -189,6 +189,23 @@ models/                cache local del modelo (no se re-descarga)
 logs/                  un log por corrida
 ```
 
+## Solución de problemas
+
+- **"Se queda cargando el modelo"**: ya no debería pasar — con el modelo
+  cacheado la carga es 100 % offline (cero llamadas de red), reporta cada
+  fase ("Leyendo pesos…", "Moviendo a la GPU…", "Probando la GPU…") con un
+  cronómetro visible, y **Cancelar libera la app al instante** (la carga
+  sigue de fondo y se aprovecha en el próximo Procesar).
+- **La app dice "PyTorch sin soporte para tu GPU"**: el PyTorch instalado no
+  trae kernels para esa GPU (típico: wheels que no son cu128 con una RTX
+  50xx). Sin este chequeo, la primera operación CUDA se queda compilando
+  kernels por decenas de minutos — parece un cuelgue. Solución: re-correr
+  `setup_windows.bat` (reinstala PyTorch CUDA 12.8). Forzar GPU de todas
+  formas: variable de entorno `KAMIRU_FORCE_CUDA=1`.
+- **Diagnóstico**: cada corrida deja un log en `logs/`; los errores de la
+  GUI muestran la ruta exacta del log en el diálogo. Bajo `pythonw`/exe sin
+  consola, la salida de las librerías va a `logs/gui_console.log`.
+
 ## Notas y decisiones
 
 - **Piezas que se tocan:** por defecto salen como un solo objeto (regla

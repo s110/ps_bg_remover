@@ -50,7 +50,8 @@ REM --- 4. PyTorch: CUDA 12.8 si hay GPU NVIDIA (5070 Ti = Blackwell), CPU si no
 where nvidia-smi >nul 2>&1
 if %errorlevel%==0 (
     echo Instalando PyTorch con CUDA 12.8 ^(GPU NVIDIA detectada^)...
-    %UV% pip install --python %VPY% torch torchvision --index-url https://download.pytorch.org/whl/cu128 || (
+    REM --reinstall-package: si quedo un torch CPU de antes, reemplazarlo si o si
+    %UV% pip install --python %VPY% --reinstall-package torch --reinstall-package torchvision torch torchvision --index-url https://download.pytorch.org/whl/cu128 || (
         echo ERROR instalando PyTorch CUDA & pause & exit /b 1
     )
 ) else (

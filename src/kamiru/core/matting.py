@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-from ..paths import configure_hf_cache, default_model_file, hf_token
+from ..paths import configure_hf_cache, default_model_file
 from .device import DeviceInfo, detect_device
 
 log = logging.getLogger("kamiru.matting")
@@ -106,17 +106,27 @@ class NeuralMatter(BaseMatter):
         self.device_info = device or detect_device()
         self._torch = torch
 
+        import time
+
+        def say(msg: str) -> None:
+            log.info(msg)
+            if progress:
+                progress(msg)
+
         log.info("Cargando modelo %s (%s) en %s...", model_key, self.repo, self.device_info.kind)
         try:
-            # descarga con progreso detallado (o valida el cache local)
+            # 1) resolver/descargar a cache local (offline si ya está completo)
             from .model_fetch import ensure_model
 
-            ensure_model(self.repo, progress)
-            if progress:
-                progress(f"Cargando {model_key} en {self.device_info.kind}...")
+            local_path = ensure_model(self.repo, progress)
+
+            # 2) leer pesos DESDE LA RUTA LOCAL: cero red en este paso
+            t0 = time.perf_counter()
+            say(f"Leyendo pesos de {model_key} desde el disco...")
             self.model = AutoModelForImageSegmentation.from_pretrained(
-                self.repo, trust_remote_code=True, token=hf_token()
+                local_path, trust_remote_code=True
             )
+            say(f"Pesos leídos ({time.perf_counter() - t0:.0f} s).")
         except Exception as exc:
             msg = str(exc).lower()
             if "gated" in msg or "401" in msg:
@@ -134,7 +144,27 @@ class NeuralMatter(BaseMatter):
         else:
             # algunos checkpoints (BiRefNet) vienen en fp16; CPU/MPS van en fp32
             self.model.float()
+        if self.device_info.kind != "cpu":
+            say(f"Moviendo el modelo a la GPU ({self.device_info.kind})...")
+        t0 = time.perf_counter()
         self.model.to(self._device)
+
+        # 3) warmup solo en GPU: la primera inferencia inicializa/compila
+        # kernels. Hacerla acá, con aviso, para que no parezca un cuelgue
+        # en la primera foto.
+        if self.device_info.kind != "cpu":
+            say("Probando la GPU (primera inferencia; puede tardar un rato "
+                "la primera vez)...")
+            try:
+                dummy = torch.zeros(
+                    1, 3, 256, 256, device=self._device,
+                    dtype=torch.float16 if self._half else torch.float32)
+                with torch.no_grad():
+                    self._forward(dummy)
+            except Exception:
+                log.warning("Warmup falló (se seguirá igual)", exc_info=True)
+        say(f"Modelo {model_key} listo en {self.device_info.kind} "
+            f"({time.perf_counter() - t0:.0f} s).")
 
     def _preprocess(self, rgb: Image.Image):
         import torchvision.transforms.functional as TF
