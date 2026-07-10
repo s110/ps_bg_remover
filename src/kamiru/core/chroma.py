@@ -27,25 +27,15 @@ def sample_background_color(rgb: Image.Image, patch_frac: float = 0.04) -> tuple
     return tuple(int(v) for v in med)
 
 
-def chroma_alpha(
-    rgb: Image.Image,
-    key_color: tuple[int, int, int] | None = None,
-    tolerance: float = 0.14,
-    softness: float = 0.10,
-) -> np.ndarray:
-    """Alfa float [0,1]: 0 donde el pixel se parece al color de fondo.
+def color_distance(arr: np.ndarray, key_color: tuple[int, int, int]) -> np.ndarray:
+    """Distancia de cada pixel (RGB uint8 HxWx3) a un color clave, en HSV.
 
-    La distancia se mide en HSV con el matiz (H) circular y ponderado fuerte,
-    para que un fondo verde no arrastre objetos de brillo similar.
-    ``tolerance`` es el radio donde el pixel es fondo puro; ``softness`` el
-    ancho de la transición suave hacia objeto.
+    El matiz (H) es circular y se pondera fuerte, para que un fondo verde no
+    arrastre objetos de brillo similar. Si el color clave es casi neutro
+    (gris/blanco/negro) el matiz no informa y su peso baja con la saturación.
     """
     import cv2
 
-    if key_color is None:
-        key_color = sample_background_color(rgb)
-
-    arr = np.asarray(rgb, dtype=np.uint8)
     hsv = cv2.cvtColor(arr, cv2.COLOR_RGB2HSV).astype(np.float32)
     key = cv2.cvtColor(
         np.array([[key_color]], dtype=np.uint8), cv2.COLOR_RGB2HSV
@@ -58,10 +48,27 @@ def chroma_alpha(
 
     dh = np.abs(h - kh)
     dh = np.minimum(dh, 1.0 - dh) * 2.0  # circular, [0,1]
-    # Si el fondo es casi neutro (gris/blanco/negro) el matiz no informa:
-    # pesar el matiz según la saturación del color clave.
     hue_w = 3.0 * min(1.0, ks * 4.0)
-    dist = np.sqrt((dh * hue_w) ** 2 + (s - ks) ** 2 + (v - kv) ** 2)
+    return np.sqrt((dh * hue_w) ** 2 + (s - ks) ** 2 + (v - kv) ** 2)
+
+
+def chroma_alpha(
+    rgb: Image.Image,
+    key_color: tuple[int, int, int] | None = None,
+    tolerance: float = 0.14,
+    softness: float = 0.10,
+) -> np.ndarray:
+    """Alfa float [0,1]: 0 donde el pixel se parece al color de fondo.
+
+    ``tolerance`` es el radio donde el pixel es fondo puro; ``softness`` el
+    ancho de la transición suave hacia objeto.
+    """
+    import cv2
+
+    if key_color is None:
+        key_color = sample_background_color(rgb)
+
+    dist = color_distance(np.asarray(rgb, dtype=np.uint8), key_color)
 
     lo, hi = tolerance, tolerance + max(softness, 1e-6)
     alpha = np.clip((dist - lo) / (hi - lo), 0.0, 1.0).astype(np.float32)

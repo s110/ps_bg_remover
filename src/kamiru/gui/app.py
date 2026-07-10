@@ -67,6 +67,8 @@ class KamiruApp:
             value=saved.resolution if saved.resolution in RESOLUTIONS else "1024")
         self.min_area = tk.StringVar(value=saved.min_area)
         self.split_touching = tk.BooleanVar(value=saved.split_touching)
+        self.review_uncertain = tk.BooleanVar(value=saved.review_uncertain)
+        self.verify_second = tk.BooleanVar(value=saved.verify_second)
         self.chroma_auto = tk.BooleanVar(value=True)
         self.chroma_color: tuple[int, int, int] | None = None
         self.dropped_files: list[Path] = []
@@ -76,6 +78,8 @@ class KamiruApp:
         self._cancel = threading.Event()
         self._matter = None
         self._matter_key: tuple | None = None
+        self._verifier = None
+        self._verifier_key: tuple | None = None
         # generación de trabajo: Cancelar la incrementa y el trabajo viejo
         # queda "huérfano" — la UI se libera al instante sin esperar al hilo
         self._job_gen = 0
@@ -169,6 +173,13 @@ class KamiruApp:
             side="left", padx=(10, 0))
         self._chroma_swatch = tk.Label(a3, text="  auto  ", relief="sunken")
         self._chroma_swatch.pack(side="left", padx=(8, 0))
+
+        a4 = ttk.Frame(self.adv); a4.pack(fill="x", **pad)
+        ttk.Label(a4, text="Calidad:", width=15).pack(side="left")
+        ttk.Checkbutton(a4, text="Mover recortes dudosos a «revisar»",
+                        variable=self.review_uncertain).pack(side="left")
+        ttk.Checkbutton(a4, text="Contrastar con un 2º modelo",
+                        variable=self.verify_second).pack(side="left", padx=(14, 0))
 
         # ------- acciones, progreso, resumen
         actions = ttk.Frame(main); actions.pack(fill="x", **pad)
@@ -292,6 +303,8 @@ class KamiruApp:
             resolution=self.resolution.get(),
             min_area=self.min_area.get(),
             split_touching=self.split_touching.get(),
+            review_uncertain=self.review_uncertain.get(),
+            verify_second=self.verify_second.get(),
         ))
 
     # ------------------------------------------------------------- proceso
@@ -314,6 +327,7 @@ class KamiruApp:
             "resolution": int(self.resolution.get()),
             "chroma_auto": self.chroma_auto.get(),
             "chroma_color": self.chroma_color,
+            "verify": self.verify_second.get(),
         }
 
     def _build_matter(self, spec: dict, gen: int):
@@ -338,6 +352,25 @@ class KamiruApp:
         self._matter, self._matter_key = matter, key
         return matter
 
+    def _build_verifier(self, spec: dict, gen: int):
+        """Motor de contraste (2º modelo), con su propio cache entre corridas."""
+        from ..core.matting import pick_verifier_model
+
+        choice = spec["choice"]
+        primary = "chroma" if choice.startswith("croma") else choice
+        vchoice = pick_verifier_model(primary)
+        key = (vchoice, spec["resolution"])
+        if self._verifier is not None and self._verifier_key == key:
+            return self._verifier
+        from ..core.matting import load_matter
+
+        verifier = load_matter(
+            vchoice, process_resolution=spec["resolution"],
+            progress=lambda msg: self._queue.put(("status", gen, f"[contraste] {msg}")),
+        )
+        self._verifier, self._verifier_key = verifier, key
+        return verifier
+
     def _validated_options(self) -> BatchOptions | None:
         try:
             min_area = int(self.min_area.get())
@@ -350,6 +383,7 @@ class KamiruApp:
             min_area=min_area,
             split_touching=self.split_touching.get(),
             suffix=self.suffix.get(),
+            move_uncertain=self.review_uncertain.get(),
         )
 
     def _begin_job(self) -> int:
@@ -396,6 +430,7 @@ class KamiruApp:
         def work():
             try:
                 matter = self._build_matter(spec, gen)
+                verifier = self._build_verifier(spec, gen) if spec["verify"] else None
                 if self._is_stale(gen):
                     return  # cancelado durante la carga: el modelo queda cacheado
                 summary = run_batch(
@@ -403,6 +438,7 @@ class KamiruApp:
                     progress=lambda done, total, name: self._queue.put(
                         ("progress", gen, done, total, name)),
                     cancel=lambda: self._is_stale(gen),
+                    verifier=verifier,
                 )
                 self._queue.put(("done", gen, summary))
             except Exception as exc:
@@ -436,14 +472,17 @@ class KamiruApp:
                     return
                 loaded = load_image(first)
                 result = matter.cutout(loaded.rgb)
-                self._queue.put(("preview", gen, first.name, result.rgba))
+                from ..core.quality import assess_cutout
+
+                reasons = [f.message for f in assess_cutout(loaded.rgb, result.alpha).flags]
+                self._queue.put(("preview", gen, first.name, result.rgba, reasons))
             except Exception as exc:
                 log.exception("Fallo de la vista previa")
                 self._queue.put(("fatal", gen, str(exc)))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _show_preview(self, name: str, rgba) -> None:
+    def _show_preview(self, name: str, rgba, reasons: list[str]) -> None:
         from PIL import Image, ImageTk
 
         max_side = 680
@@ -466,6 +505,9 @@ class KamiruApp:
         lbl = tk.Label(win, image=photo)
         lbl.image = photo  # evitar que el GC borre la imagen
         lbl.pack()
+        if reasons:
+            ttk.Label(win, text="⚠ Recorte dudoso: " + "; ".join(reasons),
+                      foreground="#a33", wraplength=660).pack(padx=10, pady=(6, 0))
         ttk.Label(win, text="Así saldrá el recorte. Cierra esta ventana y "
                             "aprieta Procesar si se ve bien.").pack(pady=6)
 
@@ -511,7 +553,7 @@ class KamiruApp:
                 elif kind == "preview":
                     self._end_job()
                     self._set_status("Vista previa lista.")
-                    self._show_preview(msg[2], msg[3])
+                    self._show_preview(msg[2], msg[3], msg[4])
                 elif kind == "done":
                     summary = msg[2]
                     self._end_job()

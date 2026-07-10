@@ -4,6 +4,7 @@ Ejemplos:
     kamiru fotos/ salida/ --modo individual --formato png --area-minima 400
     kamiru fotos/ salida/ --modelo birefnet-hr --resolucion 2048
     kamiru fotos/ salida/ --motor croma --chroma-color 00ff00
+    kamiru fotos/ salida/ --verificar --revisar   # consenso + carpeta revisar/
 """
 
 from __future__ import annotations
@@ -52,6 +53,15 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Color de fondo hex para croma (default: auto por esquinas)")
     p.add_argument("--psd-archivos-sueltos", action="store_true",
                    help="Individual+PSD: un PSD por pieza en vez de un PSD por capas")
+    p.add_argument("--revisar", action="store_true",
+                   help="Mover los recortes dudosos a SALIDA/revisar/")
+    p.add_argument("--verificar", action="store_true",
+                   help="Contrastar cada foto con un segundo modelo (consenso): "
+                        "el desacuerdo marca el recorte como dudoso")
+    p.add_argument("--modelo-verificacion", choices=list(MODEL_REPOS), default=None,
+                   help="Modelo del contraste (default: automático, distinto al principal)")
+    p.add_argument("--sin-control-calidad", action="store_true",
+                   help="No calcular las señales de recorte dudoso (nivel 1)")
     p.add_argument("-v", "--verbose", action="store_true")
     return p
 
@@ -64,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     logfile = setup_batch_logging(logs_dir())
 
+    device = None
     if args.motor == "croma":
         from .core.chroma import ChromaMatter
 
@@ -79,6 +90,18 @@ def main(argv: list[str] | None = None) -> int:
         matter = load_matter(args.modelo, process_resolution=args.resolucion,
                              device=device, progress=print)
 
+    verifier = None
+    if args.verificar:
+        from .core.device import detect_device
+        from .core.matting import load_matter, pick_verifier_model
+
+        if device is None:
+            device = detect_device()
+        vkey = args.modelo_verificacion or pick_verifier_model(matter.name)
+        print(f"Modelo de contraste: {vkey}")
+        verifier = load_matter(vkey, process_resolution=args.resolucion,
+                               device=device, progress=print)
+
     opts = BatchOptions(
         mode=args.modo,
         fmt=args.formato,
@@ -88,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
         split_touching=args.separar_tocandose,
         psd_layered=not args.psd_archivos_sueltos,
         suffix=args.sufijo,
+        quality_check=not args.sin_control_calidad,
+        move_uncertain=args.revisar,
     )
 
     entrada = args.entrada
@@ -97,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         if name:
             print(f"[{done + 1}/{total}] {name}", flush=True)
 
-    summary = run_batch(inputs, args.salida, matter, opts, progress=progress)
+    summary = run_batch(inputs, args.salida, matter, opts, progress=progress,
+                        verifier=verifier)
     print("\n===== Resumen =====")
     print(summary.text())
     print(f"Log: {logfile}")

@@ -39,6 +39,19 @@ GATED_HELP = (
 )
 
 
+# Preferencia del modelo de contraste (nivel 2): primero los que no piden
+# token de HuggingFace, para que la verificación funcione sin registro.
+VERIFIER_PRIORITY = ("birefnet", "ben2", "birefnet-hr", "rmbg-2.0")
+
+
+def pick_verifier_model(primary: str) -> str:
+    """Modelo para contrastar resultados: el primero distinto al principal."""
+    for key in VERIFIER_PRIORITY:
+        if key != primary:
+            return key
+    return DEFAULT_MODEL
+
+
 def resolve_default_model() -> str:
     """Modelo por defecto: el fijado por el setup, o RMBG-2.0."""
     f = default_model_file()
