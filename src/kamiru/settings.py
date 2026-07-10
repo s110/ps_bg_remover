@@ -26,6 +26,8 @@ class Settings:
     resolution: str = "1024"
     min_area: str = "400"
     split_touching: bool = False
+    review_uncertain: bool = True   # mover recortes dudosos a salida/revisar/
+    verify_second: bool = True      # contrastar con un segundo modelo
 
 
 def settings_path():

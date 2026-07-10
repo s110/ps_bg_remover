@@ -1,8 +1,11 @@
 """Pipeline por lotes: carpeta de entrada → recortes exportados + resumen.
 
-Por cada imagen: cargar (EXIF/HEIC) → alfa con el motor elegido → RGBA a
-resolución completa → modo conjunto o individual → exportar. Una imagen que
-falla se registra y se salta, sin abortar el lote.
+Por cada imagen: cargar (EXIF/HEIC) → alfa con el motor elegido → control de
+calidad (señales del alfa y, si hay un motor de contraste, consenso entre
+modelos) → RGBA a resolución completa → modo conjunto o individual →
+exportar. Los recortes dudosos pueden ir a ``salida/revisar/`` para que solo
+haya que mirar esos a mano. Una imagen que falla se registra y se salta, sin
+abortar el lote.
 """
 
 from __future__ import annotations
@@ -19,9 +22,12 @@ import numpy as np
 from .export import FORMATS, export_single, extension_for, numbered_stem, unique_path
 from .imageio import list_images, load_image
 from .matting import BaseMatter
+from .quality import QualityFlag, assess_cutout, compare_alphas, merge_flags
 from .separation import Component, content_bbox, crop_component, separate
 
 log = logging.getLogger("kamiru.pipeline")
+
+REVIEW_DIRNAME = "revisar"  # subcarpeta de salida para recortes dudosos
 
 
 @dataclass
@@ -34,6 +40,8 @@ class BatchOptions:
     split_touching: bool = False      # watershed para piezas que se tocan
     psd_layered: bool = True          # en individual+PSD: 1 PSD con capas por foto
     suffix: str = ""                  # sufijo opcional: foto_recorte.png, foto_recorte_01.png
+    quality_check: bool = True        # nivel 1: señales de recorte dudoso
+    move_uncertain: bool = False      # recortes dudosos → salida/revisar/
 
     def normalized_suffix(self) -> str:
         s = self.suffix.strip()
@@ -63,6 +71,9 @@ class ImageReport:
     objects_discarded: int = 0        # bajo el área mínima
     seconds: float = 0.0
     error: str | None = None
+    review: bool = False              # recorte dudoso: conviene mirarlo a mano
+    review_reasons: list[str] = field(default_factory=list)
+    consensus_iou: float | None = None  # coincidencia con el motor de contraste
 
 
 @dataclass
@@ -89,11 +100,22 @@ class BatchSummary:
     def empty(self) -> list[ImageReport]:
         return [r for r in self.reports if r.ok and not r.outputs]
 
+    @property
+    def to_review(self) -> list[ImageReport]:
+        return [r for r in self.reports if r.ok and r.review and r.outputs]
+
     def text(self) -> str:
         lines = [
             f"Imágenes procesadas: {self.succeeded} de {self.total}",
             f"Archivos exportados: {self.files_exported}",
         ]
+        if self.to_review:
+            moved = any(o.parent.name == REVIEW_DIRNAME
+                        for r in self.to_review for o in r.outputs)
+            where = f" (en la carpeta «{REVIEW_DIRNAME}/»)" if moved else ""
+            lines.append(f"Recortes dudosos{where}: {len(self.to_review)}")
+            for r in self.to_review:
+                lines.append(f"  - {r.source.name}: {'; '.join(r.review_reasons)}")
         if self.empty:
             lines.append(
                 f"Sin objetos detectados: {len(self.empty)} "
@@ -123,6 +145,7 @@ def process_image(
     matter: BaseMatter,
     out_dir: Path,
     opts: BatchOptions,
+    verifier: BaseMatter | None = None,
 ) -> ImageReport:
     t0 = time.perf_counter()
     report = ImageReport(source=path, ok=True)
@@ -131,6 +154,28 @@ def process_image(
     alpha = result.alpha
     rgba = np.asarray(result.rgba, dtype=np.uint8)
     stem = path.stem + opts.normalized_suffix()
+
+    flags: list[QualityFlag] = []
+    if opts.quality_check:
+        flags = list(assess_cutout(loaded.rgb, alpha, opts.alpha_threshold).flags)
+    if verifier is not None:
+        try:
+            consensus = compare_alphas(alpha, verifier.alpha(loaded.rgb),
+                                       opts.alpha_threshold)
+            report.consensus_iou = consensus.iou
+            flags = merge_flags(flags, consensus)
+        except Exception:
+            # el contraste es un extra: si falla, la foto sigue su camino
+            log.warning("%s: falló el motor de contraste, sigo sin consenso",
+                        path.name, exc_info=True)
+    report.review = bool(flags)
+    report.review_reasons = [f.message for f in flags]
+    if report.review:
+        log.warning("%s: recorte dudoso — %s", path.name,
+                    "; ".join(report.review_reasons))
+        if opts.move_uncertain:
+            out_dir = out_dir / REVIEW_DIRNAME
+            out_dir.mkdir(parents=True, exist_ok=True)
 
     if opts.mode == "conjunto":
         bbox = content_bbox(alpha, opts.alpha_threshold)
@@ -188,8 +233,13 @@ def run_batch(
     opts: BatchOptions | None = None,
     progress: ProgressFn | None = None,
     cancel: Callable[[], bool] | None = None,
+    verifier: BaseMatter | None = None,
 ) -> BatchSummary:
-    """Procesa una carpeta o una lista de archivos. Nunca aborta por una imagen."""
+    """Procesa una carpeta o una lista de archivos. Nunca aborta por una imagen.
+
+    ``verifier`` es un segundo motor opcional: cada foto se recorta también
+    con él y el desacuerdo entre ambos marca el recorte como dudoso.
+    """
     opts = opts or BatchOptions()
     opts.validate()
     if isinstance(inputs, Path):
@@ -209,7 +259,7 @@ def run_batch(
         if progress:
             progress(i - 1, total, path.name)
         try:
-            report = process_image(path, matter, out_dir, opts)
+            report = process_image(path, matter, out_dir, opts, verifier=verifier)
             log.info(
                 "%s: %d objeto(s), %d archivo(s), %.1fs",
                 path.name, report.objects_found, len(report.outputs), report.seconds,

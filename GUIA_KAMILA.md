@@ -34,6 +34,16 @@ y el botón **Abrir salida** te lleva directo a tus recortes.
 La app **recuerda tu configuración**: mañana se abre con las mismas carpetas
 y opciones de hoy.
 
+## La carpeta «revisar»
+
+La app revisa cada recorte sola: mira si el borde salió raro, si se coló el
+fondo, y hasta recorta la foto con **dos modelos distintos** para comparar.
+Si un recorte le parece dudoso, lo guarda igual pero dentro de la carpeta
+**`revisar/`** en tu salida, y el resumen te dice el motivo de cada uno.
+
+O sea: lo que está **fuera** de `revisar/` ya está bien — no tienes que
+calar todas las fotos una por una, solo mirar las poquitas de esa carpeta.
+
 ## Tips
 
 - No importa si el fondo es madera, verde o cartulina: la IA lo quita igual,

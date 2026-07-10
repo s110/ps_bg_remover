@@ -136,6 +136,26 @@ con el botón *Fotos…*).
 Una imagen que falla **se registra y se salta** sin abortar el lote; al final
 hay resumen de exportados y errores, y queda log por corrida en `logs/`.
 
+### Control de calidad y carpeta `revisar/`
+
+Para no tener que calar los recortes uno por uno, cada foto pasa por dos
+niveles de control:
+
+1. **Señales del propio alfa** (gratis): borde demasiado difuso (matte
+   "lechoso"), objeto que toca el borde del encuadre, color del fondo dentro
+   del objeto, o recorte que cubre casi toda la foto.
+2. **Consenso entre modelos** (opcional, activado por defecto en la GUI):
+   la misma foto se recorta con un **segundo modelo** (automático: `birefnet`
+   si el principal es RMBG-2.0) y se comparan las máscaras (IoU). Si los dos
+   coinciden, las alarmas suaves del nivel 1 se descartan como falsa alarma;
+   si divergen, la foto queda marcada aunque el nivel 1 no haya visto nada.
+
+Los recortes marcados **se exportan igual**, pero a `salida/revisar/`
+(opción "Mover recortes dudosos a «revisar»"), y el resumen lista cada foto
+con su motivo. Lo que quedó fuera de `revisar/` es confiable: solo hay que
+mirar a mano las dudosas. La **Vista previa** también avisa si el recorte de
+la primera foto es dudoso y por qué.
+
 ## Opciones avanzadas (GUI → "Avanzado", o CLI)
 
 | Opción | Qué hace |
@@ -145,6 +165,7 @@ hay resumen de exportados y errores, y queda log por corrida en `logs/`.
 | Área mínima (px²) | filtro de motas y polvo (default 400) |
 | Separar piezas que se tocan | watershed sobre la transformada de distancia (experimental) |
 | Croma | color de fondo automático (muestreo de esquinas) o elegido a mano — útil como camino alterno en green screen / cartulina |
+| Calidad | mover recortes dudosos a `revisar/` y contrastar con un 2º modelo (consenso) |
 
 Además la GUI trae:
 
@@ -167,6 +188,7 @@ kamiru foto.jpg salida/                                        # una foto suelta
 kamiru fotos/ salida/ --modelo birefnet-hr --resolucion 2048   # A/B de borde
 kamiru fotos/ salida/ --motor croma --chroma-color 00ff00      # green screen
 kamiru fotos/ salida/ --separar-tocandose                      # watershed
+kamiru fotos/ salida/ --verificar --revisar                    # consenso 2º modelo + revisar/
 ```
 
 ## Estructura
@@ -176,6 +198,7 @@ src/kamiru/            paquete (core reutilizable + GUI + CLI)
   core/matting.py        motores RMBG-2.0 / BiRefNet / BEN2 (cutout → RGBA)
   core/separation.py     connected components + watershed + filtro de área
   core/chroma.py         croma HSV (auto por esquinas o color manual)
+  core/quality.py        señales de calidad del alfa + consenso entre modelos
   core/export.py         PNG / TIFF 8-16 bit / PSD + nomenclatura
   core/psd_writer.py     escritor PSD por capas (RLE), puro numpy
   core/pipeline.py       lote, progreso, errores, resumen, logging
