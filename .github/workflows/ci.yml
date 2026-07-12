@@ -1,0 +1,34 @@
+# CI: la suite de tests en cada push a main y cada PR.
+#
+# Los tests corren con motores falsos (sin GPU, sin torch, sin descargar
+# modelos — ver tests/), así que se instalan solo las dependencias livianas
+# y la corrida completa tarda segundos.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (sin torch — los tests no lo usan)
+        run: |
+          uv venv env --python 3.12
+          uv pip install --python env/bin/python \
+            numpy pillow opencv-python-headless tifffile huggingface_hub \
+            pytest psd-tools
+
+      - name: Run tests
+        run: env/bin/python -m pytest tests/ -q

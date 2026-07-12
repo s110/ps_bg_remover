@@ -198,6 +198,51 @@ def test_broken_verifier_does_not_break_batch(folder, tmp_path):
     assert (out / "una_pieza.png").exists()  # sin consenso, sin drama
 
 
+def test_no_empty_revisar_dir_when_nothing_exported(folder, tmp_path):
+    # primario no ve nada (sin export) pero el consenso marca dudoso:
+    # revisar/ no debe quedar creada vacía
+    out = tmp_path / "out"
+    s = run_batch(folder, out, EmptyMatter(),
+                  BatchOptions(mode="conjunto", fmt="png", move_uncertain=True),
+                  verifier=FakeMatter())
+    assert s.reports[0].review          # los modelos no coinciden
+    assert not s.reports[0].outputs     # pero no hubo nada que exportar
+    assert not (out / REVIEW_DIRNAME).exists()
+
+
+# ------------------------------------------------------------- CLI
+
+def test_cli_rejects_same_verifier_model():
+    from kamiru.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["fotos", "salida", "--verificar",
+              "--modelo", "birefnet", "--modelo-verificacion", "birefnet"])
+
+
+def test_cli_verifier_load_failure_is_not_fatal(tmp_path, monkeypatch, capsys):
+    """Si el 2º modelo no carga (sin red), el lote sigue con el principal."""
+    from kamiru.cli import main
+
+    monkeypatch.setenv("KAMIRU_HOME", str(tmp_path))
+    monkeypatch.setattr("kamiru.core.device.detect_device", lambda: object())
+
+    def boom(*_a, **_k):
+        raise RuntimeError("sin red")
+
+    monkeypatch.setattr("kamiru.core.matting.load_matter", boom)
+
+    inp = tmp_path / "in"
+    inp.mkdir()
+    scene([(100, 60, 80, 80, (20, 160, 60))]).save(inp / "una_pieza.png")
+    out = tmp_path / "out"
+
+    rc = main([str(inp), str(out), "--motor", "croma", "--verificar"])
+    assert rc == 0
+    assert (out / "una_pieza.png").exists()
+    assert "no se pudo cargar el modelo de contraste" in capsys.readouterr().out
+
+
 def test_quality_check_can_be_disabled(folder, tmp_path):
     # todo gris: el "objeto" tiene el color del fondo → dudoso con calidad ON
     inp = tmp_path / "gray"

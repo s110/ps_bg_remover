@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "kamiru"
-version = "1.0.0"
+version = "1.2.0"
 description = "Recorte de fondos por lotes con IA (RMBG-2.0) — app local para Kamila y Sebastian"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"

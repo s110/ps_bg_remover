@@ -174,8 +174,9 @@ def process_image(
         log.warning("%s: recorte dudoso — %s", path.name,
                     "; ".join(report.review_reasons))
         if opts.move_uncertain:
+            # solo la ruta: la carpeta se crea recién al exportar, para no
+            # dejar un revisar/ vacío si la foto no produce archivos
             out_dir = out_dir / REVIEW_DIRNAME
-            out_dir.mkdir(parents=True, exist_ok=True)
 
     if opts.mode == "conjunto":
         bbox = content_bbox(alpha, opts.alpha_threshold)
@@ -183,6 +184,7 @@ def process_image(
             log.warning("%s: sin contenido detectado, no se exporta", path.name)
         else:
             cropped = _crop_bbox(rgba, bbox, opts.margin)
+            out_dir.mkdir(parents=True, exist_ok=True)
             out = export_single(cropped, out_dir, stem, opts.fmt, loaded.icc_profile)
             report.outputs.append(out)
             report.objects_found = 1
@@ -199,6 +201,8 @@ def process_image(
         n_kept = len(find_components(alpha, min_area=opts.min_area, threshold=opts.alpha_threshold))
         report.objects_discarded = max(0, n_all - n_kept)
         report.objects_found = len(comps)
+        if comps:
+            out_dir.mkdir(parents=True, exist_ok=True)
         if not comps:
             log.warning("%s: sin objetos sobre el área mínima", path.name)
         elif opts.fmt == "psd" and opts.psd_layered:

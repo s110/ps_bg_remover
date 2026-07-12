@@ -67,7 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if (args.verificar and args.motor == "ia"
+            and args.modelo_verificacion == args.modelo):
+        parser.error("--modelo-verificacion debe ser distinto de --modelo: "
+                     "contrastar un modelo consigo mismo no verifica nada")
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(levelname)s %(name)s: %(message)s",
@@ -95,12 +100,21 @@ def main(argv: list[str] | None = None) -> int:
         from .core.device import detect_device
         from .core.matting import load_matter, pick_verifier_model
 
-        if device is None:
-            device = detect_device()
+        if args.motor == "croma":
+            print("AVISO: contrastar croma con un modelo neural difiere por "
+                  "diseño; espera muchas fotos marcadas como dudosas.")
         vkey = args.modelo_verificacion or pick_verifier_model(matter.name)
         print(f"Modelo de contraste: {vkey}")
-        verifier = load_matter(vkey, process_resolution=args.resolucion,
-                               device=device, progress=print)
+        try:
+            if device is None:
+                device = detect_device()
+            verifier = load_matter(vkey, process_resolution=args.resolucion,
+                                   device=device, progress=print)
+        except Exception as exc:
+            # el contraste es un extra: si no carga, el lote sigue con el
+            # motor principal y el control de calidad básico
+            print(f"AVISO: no se pudo cargar el modelo de contraste ({exc}); "
+                  "se sigue sin consenso, solo con las señales básicas.")
 
     opts = BatchOptions(
         mode=args.modo,

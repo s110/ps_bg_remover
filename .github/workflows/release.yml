@@ -13,7 +13,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Un release nunca se construye con tests rotos.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: |
+          uv venv env --python 3.12
+          uv pip install --python env/bin/python \
+            numpy pillow opencv-python-headless tifffile huggingface_hub \
+            pytest psd-tools
+      - name: Run tests
+        run: env/bin/python -m pytest tests/ -q
+
   build:
+    needs: test
     strategy:
       matrix:
         include:

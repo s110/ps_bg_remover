@@ -149,6 +149,10 @@ niveles de control:
    si el principal es RMBG-2.0) y se comparan las máscaras (IoU). Si los dos
    coinciden, las alarmas suaves del nivel 1 se descartan como falsa alarma;
    si divergen, la foto queda marcada aunque el nivel 1 no haya visto nada.
+   El contraste es *best-effort*: si el segundo modelo no puede cargar (sin
+   red, sin disco), el lote sigue igual con las señales básicas. Con el motor
+   **croma** el contraste se omite (croma y un modelo neural difieren por
+   diseño y marcarían casi todo).
 
 Los recortes marcados **se exportan igual**, pero a `salida/revisar/`
 (opción "Mover recortes dudosos a «revisar»"), y el resumen lista cada foto

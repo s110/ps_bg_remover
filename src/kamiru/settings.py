@@ -26,6 +26,9 @@ class Settings:
     resolution: str = "1024"
     min_area: str = "400"
     split_touching: bool = False
+    # Defaults en True a propósito: el control de calidad debe servir sin
+    # configurar nada. Es seguro porque si el 2º modelo no puede cargar, el
+    # lote sigue igual (solo sin consenso), y con motor croma se omite.
     review_uncertain: bool = True   # mover recortes dudosos a salida/revisar/
     verify_second: bool = True      # contrastar con un segundo modelo
 
