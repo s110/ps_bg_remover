@@ -88,7 +88,9 @@ def assess_cutout(
             soft=True,
         ))
 
-    frame = np.concatenate([obj[0], obj[-1], obj[:, 0], obj[:, -1]])
+    # marco de 1 px; las columnas van sin extremos para no contar 2 veces
+    # los píxeles de las esquinas
+    frame = np.concatenate([obj[0], obj[-1], obj[1:-1, 0], obj[1:-1, -1]])
     out.metrics["border_contact"] = contact = float(frame.mean())
     if contact > t.border_contact_max:
         out.flags.append(QualityFlag(
@@ -130,8 +132,7 @@ def assess_cutout(
 
 @dataclass
 class Consensus:
-    iou: float            # coincidencia de las máscaras binarizadas [0,1]
-    mean_abs_diff: float  # diferencia media de los alfas suaves
+    iou: float  # coincidencia de las máscaras binarizadas [0,1]
 
     def agrees(self, thresholds: QualityThresholds = DEFAULT_THRESHOLDS) -> bool:
         return self.iou >= thresholds.consensus_iou_min
@@ -149,10 +150,7 @@ def compare_alphas(
     b = alpha_b >= threshold
     union = int(np.logical_or(a, b).sum())
     inter = int(np.logical_and(a, b).sum())
-    iou = 1.0 if union == 0 else inter / union
-    mad = float(np.mean(np.abs(
-        alpha_a.astype(np.float32) - alpha_b.astype(np.float32))))
-    return Consensus(iou=iou, mean_abs_diff=mad)
+    return Consensus(iou=1.0 if union == 0 else inter / union)
 
 
 def merge_flags(

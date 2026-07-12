@@ -357,8 +357,12 @@ class KamiruApp:
         from ..core.matting import pick_verifier_model
 
         choice = spec["choice"]
-        primary = "chroma" if choice.startswith("croma") else choice
-        vchoice = pick_verifier_model(primary)
+        if choice.startswith("croma"):
+            # croma y un modelo neural difieren por diseño: contrastarlos
+            # solo marcaría casi todo como dudoso (falsas alarmas)
+            log.info("Motor croma: se omite el modelo de contraste")
+            return None
+        vchoice = pick_verifier_model(choice)
         key = (vchoice, spec["resolution"])
         if self._verifier is not None and self._verifier_key == key:
             return self._verifier
@@ -430,7 +434,18 @@ class KamiruApp:
         def work():
             try:
                 matter = self._build_matter(spec, gen)
-                verifier = self._build_verifier(spec, gen) if spec["verify"] else None
+                verifier = None
+                if spec["verify"]:
+                    try:
+                        verifier = self._build_verifier(spec, gen)
+                    except Exception:
+                        # el contraste es un extra: si el 2º modelo no carga
+                        # (sin red, sin disco), el lote sigue con el motor
+                        # principal y el control de calidad básico
+                        log.exception("No se pudo cargar el modelo de contraste")
+                        self._queue.put(("status", gen,
+                                         "⚠ Sin modelo de contraste (no se pudo "
+                                         "cargar); sigo con el control básico."))
                 if self._is_stale(gen):
                     return  # cancelado durante la carga: el modelo queda cacheado
                 summary = run_batch(
